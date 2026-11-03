@@ -5,14 +5,14 @@ const escapeHtml=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>'
 const defaults={age:37,sex:'F',height:160,weight:87,goalWeight:75,activity:1.2,objective:'lose',cal:1550,protein:120,auto:true,meals:{breakfast:{egg:2,bread:1},snack1:{},lunch:{rice:130,beans:150,beef:150,veg:150},snack2:{},dinner:{rice:100,beans:120,chicken:150,veg:150}},weights:[{date:'2026-10-30',weight:87}]};
 let state;try{state=JSON.parse(localStorage.getItem('cardapio_pilot_v1'))||structuredClone(defaults)}catch(e){state=structuredClone(defaults)};state.meals||=structuredClone(defaults.meals);state.weights||=[];state.standardMeals||=null;state.completedMeals||={};
 if(!state.sliceMigrationV15){for(const group of [state.meals,state.standardMeals]){if(!group)continue;for(const meal of Object.values(group)){if(!meal)continue;for(const [food,grams] of [['papaya',100],['melon',120]]){if(meal[food]>10)meal[food]=Math.max(1,Math.round(meal[food]/grams));}}}state.sliceMigrationV15=true;localStorage.setItem('cardapio_pilot_v1',JSON.stringify(state));}
-state.customFoods||={};state.foodOverrides||={};state.hiddenFoods||=[];
+state.customFoods||={};state.foodOverrides||={};state.hiddenFoods||=[];state.mealFoodLists||={};
 Object.assign(F,state.customFoods,state.foodOverrides);
 for(const id of state.hiddenFoods)delete F[id];
 const save=()=>localStorage.setItem('cardapio_pilot_v1',JSON.stringify(state));const n=x=>Math.round(x).toLocaleString('pt-BR');const kcal=x=>4*x.p+4*x.c+9*x.f;
 function nutrition(meal){let a={p:0,c:0,f:0};Object.entries(meal).forEach(([id,q])=>{if(!F[id]||q<=0)return;for(let k of ['p','c','f'])a[k]+=F[id][k]*q});return {...a,k:kcal(a)}}
 function all(){let a={p:0,c:0,f:0,k:0};Object.values(state.meals).forEach(m=>{let x=nutrition(m);for(let k in a)a[k]+=x[k]});return a}
 let allowedFoods={breakfast:['egg','bread','chicken','banana','apple','papaya','melon','whey'],snack1:['yogurt','banana','apple','papaya','melon','whey'],lunch:['rice','beans','veg','chicken','beef','fish','egg'],snack2:['yogurt','banana','apple','papaya','melon','whey'],dinner:['rice','beans','veg','chicken','beef','fish','egg','bread']};
-function availableFoodIds(meal){return [...new Set([...(allowedFoods[meal]||[]),...Object.keys(state.customFoods)])].filter(id=>!!F[id])}
+function availableFoodIds(meal){return [...new Set(state.mealFoodLists[meal]||[...(allowedFoods[meal]||[]),...Object.keys(state.customFoods)])].filter(id=>!!F[id])}
 function foodOptions(id,existing){let ids=availableFoodIds(id);if(existing)for(let key of Object.keys(existing)){if(F[key]&&!ids.includes(key)&&existing[key]>0)ids.push(key)}return ids}
 const meals=['breakfast','snack1','lunch','snack2','dinner'];const names={breakfast:'Café da manhã',snack1:'Lanche da manhã',lunch:'Almoço',snack2:'Lanche da tarde',dinner:'Jantar'};
 function portionMacros(id,q){let f=F[id];let p=f.p*q,c=f.c*q,g=f.f*q;let v=x=>x.toLocaleString('pt-BR',{minimumFractionDigits:1,maximumFractionDigits:1});return `<small class="food-macros" aria-label="${n(kcal({p,c,f:g}))} quilocalorias, proteínas ${v(p)} gramas, carboidratos ${v(c)} gramas, gorduras ${v(g)} gramas"><strong>${n(kcal({p,c,f:g}))} kcal</strong> / P ${v(p)}g / C ${v(c)}g / G ${v(g)}g</small>`}
@@ -40,9 +40,31 @@ window.standardStep=(id,k,d)=>{let f=F[k],v=(draftStandard[id][k]||0)+d*f.step;i
 window.saveStandard=()=>{state.standardMeals=deepCopy(draftStandard);save();renderCard();standardEditor();alert('Cardápio padrão salvo! O cardápio do dia não foi alterado.')};
 window.applyStandard=()=>{if(!state.standardMeals){alert('Crie e salve primeiro o cardápio padrão.');return}if(!confirm('Substituir todas as refeições do dia pelo cardápio padrão salvo?'))return;let completed=meals.filter(id=>state.completedMeals[id]);if(completed.length&&!confirm("As refeições já feitas serão mantidas e não serão substituídas pelo padrão. Continuar?"))return;let replacement=deepCopy(state.standardMeals);for(let id of completed)replacement[id]=deepCopy(state.meals[id]);state.meals=replacement;save();renderCard();openTab('cardapio');alert('Cardápio padrão aplicado! Refeições já feitas foram preservadas.')};
 
+function mealFoodSelection(meal){return availableFoodIds(meal)}
+window.setMealFood=(meal,id,enabled)=>{
+ if(!state.mealFoodLists[meal])state.mealFoodLists[meal]=availableFoodIds(meal);
+ let list=state.mealFoodLists[meal];
+ if(enabled&&!list.includes(id))list.push(id);
+ if(!enabled){
+  state.mealFoodLists[meal]=list.filter(x=>x!==id);
+  if(!state.completedMeals[meal])delete state.meals[meal][id];
+  if(state.standardMeals&&state.standardMeals[meal])delete state.standardMeals[meal][id];
+  if(draftStandard&&draftStandard[meal])delete draftStandard[meal][id];
+ }
+ save();renderFoodManager();renderCard();standardEditor();
+};
+window.addAllFoodsToMeal=meal=>{state.mealFoodLists[meal]=Object.keys(F);save();renderFoodManager();renderCard();standardEditor()};
+window.removeAllFoodsFromMeal=meal=>{
+ if(!confirm('Retirar todos os alimentos disponíveis nesta refeição?'))return;
+ state.mealFoodLists[meal]=[];
+ if(!state.completedMeals[meal])state.meals[meal]={};
+ if(state.standardMeals)state.standardMeals[meal]={};
+ if(draftStandard)draftStandard[meal]={};
+ save();renderFoodManager();renderCard();standardEditor();
+};
 function renderFoodManager(){
  let ids=Object.keys(F).sort((a,b)=>F[a].n.localeCompare(F[b].n,'pt-BR'));
- document.getElementById('alimentos').innerHTML=`<section class="card hero"><h2>Gerenciar alimentos</h2><p class="hint">Cadastre, edite ou retire alimentos. Para alimentos em gramas, informe os nutrientes por 100 g. Para alimentos por unidade, informe os nutrientes de uma unidade. As alterações são salvas neste navegador.</p><button class="btn full" onclick="editFood()">+ Cadastrar alimento</button></section><section class="card" id="foodForm" style="display:none"></section><section class="card"><h2>Alimentos cadastrados (${ids.length})</h2>${ids.map(id=>`<div class="food"><span class="foodname"><b>${escapeHtml(F[id].n)}</b><br><small class="muted">${F[id].unit==='g'?'Por 100 g':'Por '+escapeHtml(F[id].unit)}: P ${(F[id].p*(F[id].unit==='g'?100:1)).toFixed(1)} / C ${(F[id].c*(F[id].unit==='g'?100:1)).toFixed(1)} / G ${(F[id].f*(F[id].unit==='g'?100:1)).toFixed(1)}</small></span><button class="pill" onclick="editFood('${id}')">Editar</button><button class="pill" onclick="deleteFood('${id}')">Retirar</button></div>`).join('')}</section>`;
+ document.getElementById('alimentos').innerHTML=`<section class="card hero"><h2>Gerenciar alimentos</h2><p class="hint">Cadastre, edite ou retire alimentos. Para alimentos em gramas, informe os nutrientes por 100 g. Para alimentos por unidade, informe os nutrientes de uma unidade. As alterações são salvas neste navegador.</p><button class="btn full" onclick="editFood()">+ Cadastrar alimento</button></section><section class="card" id="foodForm" style="display:none"></section><section class="card"><h2>Alimentos por refeição</h2><p class="hint">Marque os alimentos que deseja mostrar em cada refeição. Desmarcar retira o alimento dessa refeição, sem excluí-lo do cadastro geral. Refeições já finalizadas não são alteradas.</p>${meals.map(meal=>`<div style="border-top:1px solid #e5ece5;padding:14px 0"><h3>${names[meal]}</h3><div class="pillrow"><button class="pill" onclick="addAllFoodsToMeal('${meal}')">Selecionar todos</button><button class="pill" onclick="removeAllFoodsFromMeal('${meal}')">Retirar todos</button></div><div class="grid">${ids.map(id=>`<label style="display:flex;align-items:center;gap:8px;margin:4px 0;font-size:13px"><input type="checkbox" style="flex:none" ${mealFoodSelection(meal).includes(id)?'checked':''} onchange="setMealFood('${meal}','${id}',this.checked)"><span>${escapeHtml(F[id].n)}</span></label>`).join('')}</div></div>`).join('')}</section><section class="card"><h2>Alimentos cadastrados (${ids.length})</h2>${ids.map(id=>`<div class="food"><span class="foodname"><b>${escapeHtml(F[id].n)}</b><br><small class="muted">${F[id].unit==='g'?'Por 100 g':'Por '+escapeHtml(F[id].unit)}: P ${(F[id].p*(F[id].unit==='g'?100:1)).toFixed(1)} / C ${(F[id].c*(F[id].unit==='g'?100:1)).toFixed(1)} / G ${(F[id].f*(F[id].unit==='g'?100:1)).toFixed(1)}</small></span><button class="pill" onclick="editFood('${id}')">Editar</button><button class="pill" onclick="deleteFood('${id}')">Retirar</button></div>`).join('')}</section>`;
 }
 window.editFood=(id='')=>{
  const f=id?F[id]:null;
